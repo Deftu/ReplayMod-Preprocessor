@@ -670,7 +670,7 @@ class CommentPreprocessor(
     }
 
     private val String.indentation: String
-        get() = takeWhile { it == ' ' || it == '\t' }.length
+        get() = takeWhile { it == ' ' || it == '\t' }
 
     fun convertSource(kws: Keywords, lines: List<String>, remapped: List<Pair<String, List<String>>>, fileName: String): List<String> {
         val stack = mutableListOf<IfStackEntry>()
