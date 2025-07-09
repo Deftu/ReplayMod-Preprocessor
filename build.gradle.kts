@@ -16,9 +16,9 @@
 
 plugins {
     groovy
-    kotlin("jvm") version("2.0.0")
+    kotlin("jvm") version("2.0.20")
     `kotlin-dsl`
-    val dgtVersion = "2.5.0"
+    val dgtVersion = "2.38.0"
     id("dev.deftu.gradle.tools") version(dgtVersion)
     id("dev.deftu.gradle.tools.publishing.maven") version(dgtVersion)
 }
