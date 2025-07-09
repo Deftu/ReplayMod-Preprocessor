@@ -43,7 +43,7 @@ class PreprocessPlugin : Plugin<Project> {
         val coreProject = coreProjectFile.readText().trim()
         val mcVersion = projectNode.mcVersion
         project.extra["mcVersion"] = mcVersion
-        val ext = project.extensions.create("preprocess", PreprocessExtension::class, project, project.objects, mcVersion)
+        val ext = project.extensions.create("preprocess", PreprocessExtension::class, project.objects, mcVersion)
 
         val kotlin = project.plugins.hasPlugin("kotlin")
 
@@ -217,7 +217,7 @@ class PreprocessPlugin : Plugin<Project> {
 
                 from(project.file("src"))
                 from(project.layout.buildDirectory.dir("preprocessed"))
-                into(project.layout.projectDirectory.dir("src"))
+                into(project.parent!!.layout.projectDirectory.dir("src"))
 
                 project.the<SourceSetContainer>().all {
                     val cName = if (name == "main") "" else name.uppercaseFirstChar()

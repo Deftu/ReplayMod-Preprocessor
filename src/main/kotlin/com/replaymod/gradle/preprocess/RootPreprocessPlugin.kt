@@ -12,6 +12,6 @@ class RootPreprocessPlugin : Plugin<Project> {
 
     override fun apply(project: Project) {
         project.logger.lifecycle("Preprocessor $version")
-        project.extensions.create("preprocess", RootPreprocessExtension::class, project)
+        project.extensions.create("preprocess", RootPreprocessExtension::class, project, project.objects)
     }
 }
