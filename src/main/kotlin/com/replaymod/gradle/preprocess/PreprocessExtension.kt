@@ -3,6 +3,8 @@ package com.replaymod.gradle.preprocess
 import org.gradle.api.model.ObjectFactory
 import org.gradle.kotlin.dsl.mapProperty
 import org.gradle.kotlin.dsl.property
+import java.io.File
+import java.util.function.Predicate
 
 open class PreprocessExtension(objects: ObjectFactory, mcVersion: Int) {
     val vars = objects.mapProperty<String, Int>().convention(
@@ -22,4 +24,7 @@ open class PreprocessExtension(objects: ObjectFactory, mcVersion: Int) {
     )
     val patternAnnotation = objects.property<String>()
     val manageImports = objects.property<Boolean>()
+
+    val kotlinFilter = objects.property<Predicate<File>>().convention { true }
+    val javaFilter = objects.property<Predicate<File>>().convention { true }
 }
