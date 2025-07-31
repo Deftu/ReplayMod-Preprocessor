@@ -34,6 +34,15 @@ open class PreprocessExtension(objects: ObjectFactory, mcVersion: Int) {
     val kotlinFilter = objects.property<Predicate<File>>().convention { true }
 
     /**
+     * A filter predicate for Java files. This property allows users to specify a custom filter
+     * to include or exclude certain Java files during preprocessing. By default, all files
+     * are included (`{ true }`).
+     *
+     * This filter is particularly useful for preventing invalid task dependencies when working
+     * with code generation tools, as it ensures that only the intended files are processed.
+     */
+
+    /**
      * A filter to determine which Java files should be processed.
      * By default, all files are included (`{ true }`).
      * This property can be customized to exclude certain files, helping to prevent
