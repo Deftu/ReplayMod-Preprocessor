@@ -25,6 +25,19 @@ open class PreprocessExtension(objects: ObjectFactory, mcVersion: Int) {
     val patternAnnotation = objects.property<String>()
     val manageImports = objects.property<Boolean>()
 
+    /**
+     * A filter to determine which Kotlin files should be processed.
+     * By default, all files are included (`{ true }`).
+     * This property can be customized to exclude certain files, helping to prevent
+     * invalid task dependencies when working with code generation tools.
+     */
     val kotlinFilter = objects.property<Predicate<File>>().convention { true }
+
+    /**
+     * A filter to determine which Java files should be processed.
+     * By default, all files are included (`{ true }`).
+     * This property can be customized to exclude certain files, helping to prevent
+     * invalid task dependencies when working with code generation tools.
+     */
     val javaFilter = objects.property<Predicate<File>>().convention { true }
 }
