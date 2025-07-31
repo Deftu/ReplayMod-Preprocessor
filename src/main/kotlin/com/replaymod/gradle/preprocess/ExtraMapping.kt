@@ -95,6 +95,7 @@ data class ExtraMapping(val entries: List<Entry>) {
             clsTree.visitDstName(MappedElementKind.CLASS, clsDstNsId, dstName)
         }
 
+        clsTree.visitEnd()
         val completedEntries = internalEntries.flatMap { entry ->
             fun findDstCls(entry: Entry, srcName: String): String? {
                 val extraClsMapping = extraClsMappings[srcName]
@@ -262,6 +263,7 @@ data class ExtraMapping(val entries: List<Entry>) {
             }
         }
 
+        result.visitEnd()
         return result
     }
 
