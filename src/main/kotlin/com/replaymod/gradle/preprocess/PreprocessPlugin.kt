@@ -25,6 +25,7 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.util.stream.Collectors
+import kotlin.collections.filter
 
 class PreprocessPlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -89,14 +90,14 @@ class PreprocessPlugin : Plugin<Project> {
                 val preprocessCode = project.tasks.register<PreprocessTask>("preprocess${cName}Code") {
                     inherited.tasks.findByPath("preprocess${cName}Code")?.let { dependsOn(it) }
                     entry(
-                        source = inherited.files(inheritedSourceSet.java.srcDirs),
+                        source = inherited.files(inheritedSourceSet.java.srcDirs.filter(ext.javaFilter.get()::test)),
                         overwrites = overwritesJava,
                         generated = generatedJava.get().asFile,
                     )
                     if (kotlin) {
                         entry(
                             source = inherited.files(inheritedSourceSet.withGroovyBuilder { getProperty("kotlin") as SourceDirectorySet }.srcDirs.filter {
-                                it.endsWith("kotlin")
+                                it.endsWith("kotlin") && ext.kotlinFilter.get().test(it)
                             }),
                             overwrites = overwritesKotlin,
                             generated = generatedKotlin.get().asFile,
