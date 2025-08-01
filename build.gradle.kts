@@ -15,26 +15,31 @@
  */
 
 plugins {
-    groovy
-    kotlin("jvm") version("2.0.20")
+    kotlin("jvm") version(libs.versions.kotlin)
     `kotlin-dsl`
-    val dgtVersion = "2.38.0"
-    id("dev.deftu.gradle.tools") version(dgtVersion)
-    id("dev.deftu.gradle.tools.publishing.maven") version(dgtVersion)
+
+    with(libs.versions.dgt) {
+        id("dev.deftu.gradle.tools.repo") version(this)
+        id("dev.deftu.gradle.tools.configure") version(this)
+        id("dev.deftu.gradle.tools.publishing.maven") version(this)
+        id("dev.deftu.gradle.tools.publishing.github") version(this)
+    }
 }
 
-val kotestVersion: String by project.extra
-
-java {
-    withSourcesJar()
+toolkitMavenPublishing {
+    setupPublication.set(false)
 }
 
 repositories {
-    mavenLocal()
+    maven("https://jitpack.io/")
+    maven("https://maven.fabricmc.net/")
+    maven("https://maven.minecraftforge.net/")
+    maven("https://maven.architectury.dev/")
+    maven("https://maven.jab125.dev/")
+
     mavenCentral()
-    maven(url = "https://jitpack.io/")
-    maven(url = "https://maven.fabricmc.net/")
-    maven(url = "https://maven.deftu.dev/releases/")
+    gradlePluginPortal()
+    mavenLocal()
 }
 
 dependencies {
@@ -42,12 +47,17 @@ dependencies {
     implementation(localGroovy())
     implementation("dev.deftu:remap:0.3.0")
     implementation("net.fabricmc:mapping-io:0.6.1")
-    testImplementation("io.kotest:kotest-runner-junit5-jvm:$kotestVersion")
-    testImplementation("io.kotest:kotest-assertions-core-jvm:$kotestVersion")
 }
 
 gradlePlugin {
     plugins {
+        // New plugin~!
+        register("splicer") {
+            id = "dev.deftu.toolbox.splicer"
+            implementationClass = "dev.deftu.toolbox.splicer.SplicerPlugin"
+        }
+
+        // Preprocess
         register("preprocess") {
             id = "dev.deftu.gradle.preprocess"
             implementationClass = "com.replaymod.gradle.preprocess.PreprocessPlugin"
@@ -61,11 +71,9 @@ gradlePlugin {
 }
 
 tasks {
-    withType<Test> {
-        useJUnitPlatform()
-    }
+    named<Jar>("jar") {
+        from("LICENSE")
 
-    jar {
         manifest {
             attributes["Implementation-Version"] = version
         }
