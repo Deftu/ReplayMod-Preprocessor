@@ -26,6 +26,7 @@ import java.io.File
 import java.io.Serializable
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.function.Predicate
 import java.util.regex.Pattern
 import javax.inject.Inject
 
@@ -138,15 +139,20 @@ open class PreprocessTask @Inject constructor(
     @PathSensitive(PathSensitivity.RELATIVE)
     val remappedjdkHome = objects.directoryProperty()
 
+    @Internal
+    var classpathTest: Predicate<File> = Predicate { true } // don't filter out any files by default
+
     @InputFiles
     @Optional
     @CompileClasspath
     var classpath: FileCollection? = null
+        get() = field?.filter { classpathTest.test(it) }
 
     @InputFiles
     @Optional
     @CompileClasspath
     var remappedClasspath: FileCollection? = null
+        get() = field?.filter { classpathTest.test(it) }
 
     @Input
     val vars = objects.mapProperty<String, Int>()
