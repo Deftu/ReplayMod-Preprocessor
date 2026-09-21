@@ -18,7 +18,7 @@ plugins {
     groovy
     kotlin("jvm") version("2.0.20")
     `kotlin-dsl`
-    val dgtVersion = "2.38.0"
+    val dgtVersion = "2.80.0"
     id("dev.deftu.gradle.tools") version(dgtVersion)
     id("dev.deftu.gradle.tools.publishing.maven") version(dgtVersion)
 }
@@ -40,7 +40,7 @@ repositories {
 dependencies {
     implementation(gradleApi())
     implementation(localGroovy())
-    implementation("dev.deftu:remap:0.3.0") {
+    implementation("dev.deftu:remap:0.4.0") {
         exclude("org.jetbrains.kotlin", "kotlin-compiler-embeddable")
     }
     implementation("net.fabricmc:mapping-io:0.6.1")

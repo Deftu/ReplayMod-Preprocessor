@@ -6,7 +6,8 @@ import net.fabricmc.mappingio.tree.MemoryMappingTree
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.RegularFileProperty
-import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.CacheableTask
+import org.gradle.api.tasks.Classpath
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
 import org.objectweb.asm.ClassReader
@@ -16,8 +17,9 @@ import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 import java.util.jar.JarInputStream
 
+@CacheableTask
 internal abstract class GenerateIdentityMappingsFromMinecraftJars : DefaultTask() {
-    @get:InputFiles
+    @get:Classpath
     abstract val minecraftJars: ConfigurableFileCollection
 
     @get:OutputFile

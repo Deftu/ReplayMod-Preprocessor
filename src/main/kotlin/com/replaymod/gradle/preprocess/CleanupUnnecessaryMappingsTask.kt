@@ -5,15 +5,20 @@ import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import org.gradle.work.DisableCachingByDefault
 import org.gradle.kotlin.dsl.property
 import java.io.File
 
+@DisableCachingByDefault(because = "Runs the preprocessor repeatedly and rewrites the mapping file")
 abstract class CleanupUnnecessaryMappingsTask : DefaultTask() {
     @get:Input
     val task: Property<PreprocessTask> = project.objects.property()
 
     @InputFile
+    @PathSensitive(PathSensitivity.NONE)
     val mappingFile: RegularFileProperty = project.objects.fileProperty()
 
     @TaskAction
