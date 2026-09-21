@@ -11,6 +11,7 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.file.ConfigurableFileTree
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.FileCollection
 import org.gradle.api.logging.Logging
 import org.gradle.api.model.ObjectFactory
@@ -193,10 +194,10 @@ open class PreprocessTask @Inject constructor(
         }
 
         workQueue.submit(PreprocessAction::class) {
-            compiler.set(this@PreprocessTask.compiler)
+            compiler.from(this@PreprocessTask.compiler)
             entries.set(entriesIn.map { entry ->
                 objects.newInstance(PreprocessParameters.InOut::class).apply {
-                    source.set(entry.source)
+                    source.from(entry.source)
                     generated.set(entry.generated)
                     overwrites.set(entry.overwrites)
                 }
@@ -209,8 +210,8 @@ open class PreprocessTask @Inject constructor(
             reverseMapping.set(this@PreprocessTask.reverseMapping)
             jdkHome.set(this@PreprocessTask.jdkHome)
             remappedjdkHome.set(this@PreprocessTask.remappedjdkHome)
-            classpath.set(this@PreprocessTask.classpath)
-            remappedClasspath.set(this@PreprocessTask.remappedClasspath)
+            this@PreprocessTask.classpath?.let { classpath.from(it) }
+            this@PreprocessTask.remappedClasspath?.let { remappedClasspath.from(it) }
             vars.set(this@PreprocessTask.vars)
             keywords.set(this@PreprocessTask.keywords)
             patternAnnotation.set(this@PreprocessTask.patternAnnotation)
@@ -222,10 +223,10 @@ open class PreprocessTask @Inject constructor(
 }
 
 internal interface PreprocessParameters : WorkParameters {
-    val compiler: Property<FileCollection>
+    val compiler: ConfigurableFileCollection
 
     interface InOut {
-        val source: Property<FileCollection>
+        val source: ConfigurableFileCollection
         val generated: Property<File>
         val overwrites: Property<File> // optional
     }
@@ -238,8 +239,8 @@ internal interface PreprocessParameters : WorkParameters {
     val reverseMapping: Property<Boolean>
     val jdkHome: DirectoryProperty // optional
     val remappedjdkHome: DirectoryProperty // optional
-    val classpath: Property<FileCollection> // optional
-    val remappedClasspath: Property<FileCollection> // optional
+    val classpath: ConfigurableFileCollection // optional, empty means unset
+    val remappedClasspath: ConfigurableFileCollection // optional, empty means unset
     val vars: MapProperty<String, Int>
     val keywords: MapProperty<String, Keywords>
     val patternAnnotation: Property<String> // optional
@@ -250,7 +251,7 @@ private val LOGGER = Logging.getLogger(PreprocessTask::class.java)
 
 internal abstract class PreprocessAction : WorkAction<PreprocessParameters> {
     override fun execute() {
-        val compiler = parameters.compiler.get()
+        val compiler = parameters.compiler
         if (compiler.isEmpty) {
             PreprocessActionImpl().accept(parameters)
         } else {
@@ -306,7 +307,7 @@ internal abstract class PreprocessAction : WorkAction<PreprocessParameters> {
 private class PreprocessActionImpl : Consumer<PreprocessParameters> {
     override fun accept(params: PreprocessParameters) {
         val logger = LOGGER
-        val entries = params.entries.get().map { PreprocessTask.InOut(it.source.get(), it.generated.get(), it.overwrites.orNull) }
+        val entries = params.entries.get().map { PreprocessTask.InOut(it.source, it.generated.get(), it.overwrites.orNull) }
         val sourceMappings = params.sourceMappings.orNull
         val destinationMappings = params.destinationMappings.orNull
         val intermediateMappingsName = params.intermediateMappingsName
@@ -315,8 +316,8 @@ private class PreprocessActionImpl : Consumer<PreprocessParameters> {
         val reverseMapping = params.reverseMapping.get()
         val jdkHome = params.jdkHome
         val remappedjdkHome = params.remappedjdkHome
-        val classpath = params.classpath.orNull
-        val remappedClasspath = params.remappedClasspath.orNull
+        val classpath = params.classpath.takeUnless { it.isEmpty }
+        val remappedClasspath = params.remappedClasspath.takeUnless { it.isEmpty }
         val vars = params.vars
         val keywords = params.keywords
         val patternAnnotation = params.patternAnnotation
