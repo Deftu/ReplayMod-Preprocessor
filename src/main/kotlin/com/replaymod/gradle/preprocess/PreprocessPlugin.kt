@@ -1,26 +1,29 @@
 package com.replaymod.gradle.preprocess
 
 import net.fabricmc.loom.api.LoomGradleExtensionAPI
-import net.fabricmc.loom.configuration.providers.mappings.LayeredMappingSpecBuilderImpl
-import net.fabricmc.loom.configuration.providers.mappings.LayeredMappingsFactory
+import net.fabricmc.loom.api.mappings.layered.MappingContext
+import net.fabricmc.loom.api.mappings.layered.MappingLayer
+import net.fabricmc.loom.api.mappings.layered.spec.MappingsSpec
 import net.fabricmc.mappingio.MappingReader
+import net.fabricmc.mappingio.MappingVisitor
 import net.fabricmc.mappingio.tree.MemoryMappingTree
 import org.cadixdev.lorenz.MappingSet
 import org.cadixdev.lorenz.io.MappingFormats
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
+import org.gradle.api.NamedDomainObjectProvider
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.artifacts.Configuration
+import org.gradle.api.artifacts.ResolvableConfiguration
 import org.gradle.api.file.Directory
-import org.gradle.api.file.FileCollection
+import org.gradle.api.file.RegularFile
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.file.SourceDirectorySet
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.*
-import org.gradle.api.tasks.compile.AbstractCompile
 import org.gradle.api.tasks.compile.JavaCompile
 
 import org.gradle.kotlin.dsl.*
@@ -29,7 +32,6 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.util.stream.Collectors
-import kotlin.collections.filter
 import kotlin.io.path.name
 import kotlin.io.path.toPath
 
@@ -45,6 +47,16 @@ class PreprocessPlugin : Plugin<Project> {
         val rootExtension = parent.extensions.getByType<RootPreprocessExtension>()
         val graph = rootExtension.rootNode ?: throw IllegalStateException("Preprocess graph was not configured.")
         val projectNode = graph.findNode(project.name) ?: throw IllegalStateException("Prepocess graph does not contain ${project.name}.")
+        val adjacentNodes = buildList {
+            graph.findParent(projectNode)?.first?.let { add(it) }
+            projectNode.links.forEach { add(it.first) }
+        }
+
+        if (project.isObfuscated && !projectNode.isObfuscated) {
+            throw IllegalStateException("Project appears to be obfuscated but configured preprocess node has `mappings` set to `null`")
+        } else if (!project.isObfuscated && projectNode.isObfuscated) {
+            throw IllegalStateException("Project appears to not be obfuscated but configured preprocess node has `mappings` set to a non-`null` value")
+        }
 
         val coreProjectFile = rootExtension.mainProjectFile.asFile.get()
         val coreProject = coreProjectFile.readText().trim()
@@ -63,17 +75,47 @@ class PreprocessPlugin : Plugin<Project> {
         val kotlin = project.plugins.hasPlugin("kotlin")
         val remapKotlinCompilerClasspath = setupKotlinCompilerClasspath(project)
 
+        project.the<SourceSetContainer>().configureEach {
+            val compileClasspath = if (name == "main") "compileClasspath" else name + "CompileClasspath"
+            project.configurations.consumable("preprocess-outgoing-$compileClasspath") {
+                extendsFrom(project.configurations[compileClasspath])
+            }
+        }
+
+        val projectMojangMappings = project.configurations.dependencyScope("preprocess-mojangMappings")
+        if (projectNode.isObfuscated && adjacentNodes.any { !it.isObfuscated }) {
+            project.dependencies {
+                projectMojangMappings(project.extensions.getByType<LoomGradleExtensionAPI>().layered {
+                    officialMojangMappings()
+                    // Workaround for a Loom bug where all layered mappings with the same spec (which does not include
+                    // the Minecraft version!) will have the same hash, and so the same maven coordinates / file system
+                    // location, and consequently overwrite each other, making it impossible for us to get hold of the
+                    // correct mappings.
+                    // This bypasses that by modifying the hash of our layered mappings to be different per Minecraft
+                    // version by adding a dummy layer, the hash of which is the Minecraft version.
+                    class NoOpLayer : MappingLayer {
+                        override fun visit(visitor: MappingVisitor) {}
+                    }
+                    addLayer(object : MappingsSpec<NoOpLayer> {
+                        override fun createLayer(ctx: MappingContext): NoOpLayer = NoOpLayer()
+                        override fun hashCode(): Int = projectNode.mcVersion
+                    })
+                })
+            }
+            project.configurations.consumable("preprocess-outgoing-mojangMappings") {
+                extendsFrom(projectMojangMappings.get())
+            }
+        }
+
         if (coreProject == project.name) {
             project.the<SourceSetContainer>().configureEach {
                 java.setSrcDirs(listOf(parent.file("src/$name/java")))
                 resources.setSrcDirs(listOf(parent.file("src/$name/resources")))
                 if (kotlin) {
-                    withGroovyBuilder { getProperty("kotlin") as SourceDirectorySet }.setSrcDirs(
-                        listOf(
+                    withGroovyBuilder { getProperty("kotlin") as SourceDirectorySet }.setSrcDirs(listOf(
                             parent.file("src/$name/kotlin"),
                             parent.file("src/$name/java")
-                        )
-                    )
+                    ))
                 }
             }
         } else {
@@ -82,6 +124,16 @@ class PreprocessPlugin : Plugin<Project> {
             val (mappingFile, mappingFileInverted) = extraMappings
             val reverseMappings = (inheritedLink != null) != mappingFileInverted
             val inherited = parent.evaluationDependsOn(inheritedNode.project)
+
+            fun incoming(name: String): NamedDomainObjectProvider<ResolvableConfiguration> {
+                val dependencyScope = project.configurations.dependencyScope("preprocess-incoming-$name")
+                project.dependencies {
+                    dependencyScope(project(inherited.path, "preprocess-outgoing-$name"))
+                }
+                return project.configurations.resolvable("${dependencyScope.name}-resolver") {
+                    extendsFrom(dependencyScope.get())
+                }
+            }
 
             project.the<SourceSetContainer>().configureEach {
                 val inheritedSourceSet = inherited.the<SourceSetContainer>()[name]
@@ -93,6 +145,9 @@ class PreprocessPlugin : Plugin<Project> {
                 val generatedKotlin = preprocessedRoot.dir("kotlin")
                 val generatedJava = preprocessedRoot.dir("java")
                 val generatedResources = preprocessedRoot.dir("resources")
+
+                val compileClasspath = if (name == "main") "compileClasspath" else name + "CompileClasspath"
+                val incomingCompileClasspathResolver = incoming(compileClasspath)
 
                 val preprocessCode = project.tasks.register<PreprocessTask>("preprocess${cName}Code") {
                     inherited.tasks.findByPath("preprocess${cName}Code")?.let { dependsOn(it) }
@@ -112,8 +167,8 @@ class PreprocessPlugin : Plugin<Project> {
                     }
                     jdkHome.set((inherited.tasks["compileJava"] as JavaCompile).javaCompiler.map { it.metadata.installationPath })
                     remappedjdkHome.set((project.tasks["compileJava"] as JavaCompile).javaCompiler.map { it.metadata.installationPath })
-                    classpath = inherited.tasks["compile${cName}${if (kotlin) "Kotlin" else "Java"}"].classpath
-                    remappedClasspath = project.tasks["compile${cName}${if (kotlin) "Kotlin" else "Java"}"].classpath
+                    classpath = project.files(incomingCompileClasspathResolver)
+                    remappedClasspath = project.files(project.configurations[compileClasspath])
                     mapping = mappingFile
                     reverseMapping = reverseMappings
                     vars.convention(ext.vars)
@@ -131,13 +186,12 @@ class PreprocessPlugin : Plugin<Project> {
                             ?: project.tasks["compile${cName}Kotlin"]
                     kotlinConsumerTask.dependsOn(preprocessCode)
                     withGroovyBuilder { getProperty("kotlin") as SourceDirectorySet }.setSrcDirs(
-                        listOf(
-                            overwritesKotlin,
-                            preprocessCode.map { generatedKotlin },
-                            overwritesJava,
-                            preprocessCode.map { generatedJava },
-                        )
-                    )
+                            listOf(
+                                overwritesKotlin,
+                                preprocessCode.map { generatedKotlin },
+                                overwritesJava,
+                                preprocessCode.map { generatedJava },
+                            ))
                 }
 
                 val preprocessResources = project.tasks.register<PreprocessTask>("preprocess${cName}Resources") {
@@ -163,6 +217,8 @@ class PreprocessPlugin : Plugin<Project> {
                 }
             }
 
+            val inheritedMojangMappings = incoming("mojangMappings")
+
             project.afterEvaluate {
                 if ("genSrgs" in project.tasks.names || "createMcpToSrg" in project.tasks.names) {
                     logger.warn("ForgeGradle compatibility in Preprocessor is deprecated." +
@@ -175,29 +231,43 @@ class PreprocessPlugin : Plugin<Project> {
                     val inheritedSrgMappings = inherited.tinyMappingsWithSrg
                     val projectTinyMappings = project.tinyMappings
                     val inheritedTinyMappings = inherited.tinyMappings
-                    val generatedMappingsFile = project.layout.buildDirectory.get().asFile.resolve("generatedIdentityMappings.tiny")
-                    val generatedMappingsTask = tasks.register("generateIdentityMappingsFromMinecraftJars", GenerateIdentityMappingsFromMinecraftJars::class) {
-                        minecraftJars.from(project.extensions.getByType<LoomGradleExtensionAPI>().namedMinecraftJars)
-                        output.set(generatedMappingsFile)
+                    val generateSourceMappingsTask = tasks.register("generateIdentityMappingsFromSourceMinecraftJars", GenerateIdentityMappingsFromMinecraftJars::class) {
+                        minecraftJars.from(inherited.extensions.getByType<LoomGradleExtensionAPI>().namedMinecraftJars)
+                        output.set(project.layout.buildDirectory.get().asFile.resolve("generatedSourceIdentityMappings.tiny"))
                     }
-
+                    val generateDestinationMappingsTask = tasks.register("generateIdentityMappingsFromDestinationMinecraftJars", GenerateIdentityMappingsFromMinecraftJars::class) {
+                        minecraftJars.from(project.extensions.getByType<LoomGradleExtensionAPI>().namedMinecraftJars)
+                        output.set(project.layout.buildDirectory.get().asFile.resolve("generatedDestinationIdentityMappings.tiny"))
+                    }
+                    val mergeSourceMappingsTask = tasks.register("mergeSourceNamedAndMojangMappings", MergeNamedAndMojangMappingsTask::class) {
+                        namedMappings.set { inheritedTinyMappings!! }
+                        mojangMappings.fileProvider(inheritedMojangMappings.flatMap { it.elements }.map { it.single().asFile })
+                        output.set(project.layout.buildDirectory.get().asFile.resolve("mergedSourceNamedAndMojangMappings.tiny"))
+                    }
+                    val mergeDestinationMappingsTask = tasks.register("mergeDestinationNamedAndMojangMappings", MergeNamedAndMojangMappingsTask::class) {
+                        namedMappings.set { projectTinyMappings!! }
+                        mojangMappings.fileProvider(projectMojangMappings.flatMap { it.elements }.map { it.single().asFile })
+                        output.set(project.layout.buildDirectory.get().asFile.resolve("mergedDestinationNamedAndMojangMappings.tiny"))
+                    }
                     tasks.withType<PreprocessTask>().configureEach {
                         if (projectTinyMappings == null && inheritedTinyMappings == null) {
                             // Between two unobfuscated versions
-                            dependsOn(generatedMappingsTask)
-                            sourceMappings = generatedMappingsFile
-                            destinationMappings = generatedMappingsFile
-                            intermediateMappingsName.set("named")
+                            dependsOn(generateSourceMappingsTask, generateDestinationMappingsTask)
+                            sourceMappings = generateSourceMappingsTask.get().output.get().asFile
+                            destinationMappings = generateDestinationMappingsTask.get().output.get().asFile
+                            intermediateMappingsName.set("mojang")
                         } else if (projectTinyMappings == null) {
                             // We have source mappings, but target is unobfuscated
-                            sourceMappings = inheritedTinyMappings
-                            destinationMappings = inherited.mojangMappings
-                            intermediateMappingsName.set("official")
+                            dependsOn(mergeSourceMappingsTask, generateDestinationMappingsTask)
+                            sourceMappings = mergeSourceMappingsTask.get().output.get().asFile
+                            destinationMappings = generateDestinationMappingsTask.get().output.get().asFile
+                            intermediateMappingsName.set("mojang")
                         } else if (inheritedTinyMappings == null) {
                             // We have target mappings, but source is unobfuscated
-                            sourceMappings = project.mojangMappings
-                            destinationMappings = projectTinyMappings
-                            intermediateMappingsName.set("official")
+                            dependsOn(generateSourceMappingsTask, mergeDestinationMappingsTask)
+                            sourceMappings = generateSourceMappingsTask.get().output.get().asFile
+                            destinationMappings = mergeDestinationMappingsTask.get().output.get().asFile
+                            intermediateMappingsName.set("mojang")
                         } else if ((inheritedSrgMappings != null) == (projectSrgMappings != null)) {
                             sourceMappings = inheritedSrgMappings ?: inheritedTinyMappings
                             destinationMappings = projectSrgMappings ?: projectTinyMappings
@@ -276,16 +346,16 @@ class PreprocessPlugin : Plugin<Project> {
                     fun preserveOverwrites(project: Project, toBePreserved: List<Path>?) {
                         val overwrites = project.file("src").toPath()
                         val overwritten = overwrites.toFile()
-                            .walk()
-                            .filter { it.isFile }
-                            .map { overwrites.relativize(it.toPath()) }
-                            .toList()
+                                .walk()
+                                .filter { it.isFile }
+                                .map { overwrites.relativize(it.toPath()) }
+                                .toList()
 
                         // For the soon-to-be-core project, we must not yet delete the overwrites
                         // as they have yet to be copied into the main sources.
                         if (toBePreserved != null) {
                             val source = if (project.name == coreProject) {
-                                project.parent!!.file("src").toPath()
+                                project.parent!!.file( "src").toPath()
                             } else {
                                 project.layout.buildDirectory.dir("preprocessed").get().asFile.toPath()
                             }
@@ -492,17 +562,13 @@ private val Project.notchMappings: Mappings?
 private val Project.mappingsProvider: Any?
     get() {
         val extension = extensions.findByName("loom") ?: extensions.findByName("minecraft")
-        ?: throw UnsupportedLoom("Expected `loom` or `minecraft` extension")
+            ?: throw UnsupportedLoom("Expected `loom` or `minecraft` extension")
         if (!extension.javaClass.name.contains("LoomGradleExtension")) {
             throw UnsupportedLoom("Unexpected extension class name: ${extension.javaClass.name}")
         }
 
         // Fabric Loom 1.13
-        try {
-            if (extension.javaClass.getMethod("disableObfuscation").invoke(extension) == true) {
-                return null
-            }
-        } catch (_: NoSuchMethodException) {}
+        if (!isObfuscated) return null
 
         listOf(
             "mappingConfiguration", // Fabric Loom 1.1+
@@ -511,6 +577,16 @@ private val Project.mappingsProvider: Any?
             extension.maybeGetGroovyProperty(pro)?.also { return it }
         }
         throw UnsupportedLoom("Failed to find mappings provider")
+    }
+
+private val Project.isObfuscated: Boolean
+    get() {
+        val extension = extensions.findByName("loom") ?: return true
+        return try {
+            extension.javaClass.getMethod("disableObfuscation").invoke(extension) == false
+        } catch (_: NoSuchMethodException) {
+            true
+        }
     }
 
 private val Project.tinyMappings: File?
@@ -535,25 +611,6 @@ private val Project.tinyMappingsWithSrg: File?
             }
         }
         return null
-    }
-
-private val Project.mojangMappings: File?
-    get() {
-        val factory = LayeredMappingsFactory(LayeredMappingSpecBuilderImpl.buildOfficialMojangMappings())
-        return factory.resolve(this).toFile()
-    }
-
-private val Task.classpath: FileCollection?
-    get() = if (this is AbstractCompile) {
-        this.classpath
-    } else {
-        // assume kotlin 1.7+
-        try {
-            val classpathMethod = this.javaClass.getMethod("getLibraries")
-            classpathMethod.invoke(this) as FileCollection?
-        } catch (ex: Exception) {
-            throw RuntimeException(ex)
-        }
     }
 
 private class UnsupportedLoom(msg: String) : GradleException("Loom version not supported by preprocess plugin: $msg")

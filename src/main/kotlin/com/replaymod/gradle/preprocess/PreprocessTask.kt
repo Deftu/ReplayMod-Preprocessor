@@ -4,19 +4,14 @@ import com.replaymod.gradle.remap.Transformer
 import com.replaymod.gradle.remap.legacy.LegacyMapping
 import com.replaymod.gradle.remap.legacy.LegacyMappingSetModelFactory
 import net.fabricmc.mappingio.MappedElementKind
-import net.fabricmc.mappingio.MappingReader
-import net.fabricmc.mappingio.MappingVisitor
 import net.fabricmc.mappingio.tree.MappingTree
 import net.fabricmc.mappingio.tree.MemoryMappingTree
 import org.cadixdev.lorenz.MappingSet
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
-import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.ConfigurableFileTree
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileCollection
-import org.gradle.api.file.FileSystemOperations
-import org.gradle.api.file.FileTree
-import org.gradle.api.file.ProjectLayout
 import org.gradle.api.logging.Logging
 import org.gradle.api.model.ObjectFactory
 import org.gradle.api.provider.ListProperty
@@ -33,59 +28,51 @@ import org.gradle.workers.WorkerExecutor
 import java.io.File
 import java.io.Serializable
 import java.lang.ref.SoftReference
-import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.function.Consumer
 import java.util.function.Predicate
 import java.util.regex.Pattern
 import javax.inject.Inject
-import kotlin.collections.component1
-import kotlin.collections.component2
-import kotlin.io.path.bufferedReader
-import kotlin.io.path.extension
 
 data class Keywords(
-    val disableRemap: String,
-    val enableRemap: String,
-    val `if`: String,
-    val ifdef: String,
-    val elseif: String,
-    val `else`: String,
-    val endif: String,
-    val eval: String
+        val disableRemap: String,
+        val enableRemap: String,
+        val `if`: String,
+        val ifdef: String,
+        val elseif: String,
+        val `else`: String,
+        val endif: String,
+        val eval: String
 ) : Serializable
 
 @CacheableTask
 open class PreprocessTask @Inject constructor(
-    private val layout: ProjectLayout,
-    private val fsops: FileSystemOperations,
     private val objects: ObjectFactory,
     private val workerExecutor: WorkerExecutor,
 ) : DefaultTask() {
     companion object {
         @JvmStatic
         val DEFAULT_KEYWORDS = Keywords(
-            disableRemap = "//#disable-remap",
-            enableRemap = "//#enable-remap",
-            `if` = "//#if",
-            ifdef = "//#ifdef",
-            elseif = "//#elseif",
-            `else` = "//#else",
-            endif = "//#endif",
-            eval = "//$$"
+                disableRemap = "//#disable-remap",
+                enableRemap = "//#enable-remap",
+                `if` = "//#if",
+                ifdef = "//#ifdef",
+                elseif = "//#elseif",
+                `else` = "//#else",
+                endif = "//#endif",
+                eval = "//$$"
         )
-
         @JvmStatic
         val CFG_KEYWORDS = Keywords(
-            disableRemap = "##disable-remap",
-            enableRemap = "##enable-remap",
-            `if` = "##if",
-            ifdef = "##ifdef",
-            elseif = "##elseif",
-            `else` = "##else",
-            endif = "##endif",
-            eval = "#$$"
+                disableRemap = "##disable-remap",
+                enableRemap = "##enable-remap",
+                `if` = "##if",
+                ifdef = "##ifdef",
+                elseif = "##elseif",
+                `else` = "##else",
+                endif = "##endif",
+                eval = "#$$"
         )
     }
 
@@ -101,15 +88,15 @@ open class PreprocessTask @Inject constructor(
     @InputFiles
     @SkipWhenEmpty
     @PathSensitive(PathSensitivity.RELATIVE)
-    fun getSourceFileTrees(): List<FileTree> {
+    fun getSourceFileTrees(): List<ConfigurableFileTree> {
         return entries.flatMap { it.source }.map { objects.fileTree().from(it) }
     }
 
     @InputFiles
     @Optional
     @PathSensitive(PathSensitivity.RELATIVE)
-    fun getOverwritesFileTrees(): List<FileTree> {
-        return entries.mapNotNull { it.overwrites?.let { objects.fileTree().from(it) } }
+    fun getOverwritesFileTrees(): List<ConfigurableFileTree> {
+        return entries.mapNotNull { it.overwrites }.map { objects.fileTree().from(it) }
     }
 
     @OutputDirectories
@@ -130,10 +117,10 @@ open class PreprocessTask @Inject constructor(
     // Note: Requires that source and destination mappings files to be in `tiny` format.
     @Input
     @Optional // required if source or destination mappings have more than two namespaces (optional for backwards compat)
-    val intermediateMappingsName = project.objects.property<String>()
+    val intermediateMappingsName = objects.property<String>()
 
     @Input
-    val strictExtraMappings = project.objects.property<Boolean>().convention(false)
+    val strictExtraMappings = objects.property<Boolean>().convention(false)
 
     @InputFile
     @Optional
@@ -206,10 +193,10 @@ open class PreprocessTask @Inject constructor(
         }
 
         workQueue.submit(PreprocessAction::class) {
-            compiler.from(this@PreprocessTask.compiler)
+            compiler.set(this@PreprocessTask.compiler)
             entries.set(entriesIn.map { entry ->
                 objects.newInstance(PreprocessParameters.InOut::class).apply {
-                    source.from(entry.source)
+                    source.set(entry.source)
                     generated.set(entry.generated)
                     overwrites.set(entry.overwrites)
                 }
@@ -222,21 +209,23 @@ open class PreprocessTask @Inject constructor(
             reverseMapping.set(this@PreprocessTask.reverseMapping)
             jdkHome.set(this@PreprocessTask.jdkHome)
             remappedjdkHome.set(this@PreprocessTask.remappedjdkHome)
-            classpath.from(this@PreprocessTask.classpath)
-            remappedClasspath.from(this@PreprocessTask.remappedClasspath)
+            classpath.set(this@PreprocessTask.classpath)
+            remappedClasspath.set(this@PreprocessTask.remappedClasspath)
             vars.set(this@PreprocessTask.vars)
             keywords.set(this@PreprocessTask.keywords)
             patternAnnotation.set(this@PreprocessTask.patternAnnotation)
             manageImports.set(this@PreprocessTask.manageImports)
         }
+
+        workQueue.await()
     }
 }
 
 internal interface PreprocessParameters : WorkParameters {
-    val compiler: ConfigurableFileCollection
+    val compiler: Property<FileCollection>
 
     interface InOut {
-        val source: ConfigurableFileCollection
+        val source: Property<FileCollection>
         val generated: Property<File>
         val overwrites: Property<File> // optional
     }
@@ -249,8 +238,8 @@ internal interface PreprocessParameters : WorkParameters {
     val reverseMapping: Property<Boolean>
     val jdkHome: DirectoryProperty // optional
     val remappedjdkHome: DirectoryProperty // optional
-    val classpath: ConfigurableFileCollection // optional
-    val remappedClasspath: ConfigurableFileCollection // optional
+    val classpath: Property<FileCollection> // optional
+    val remappedClasspath: Property<FileCollection> // optional
     val vars: MapProperty<String, Int>
     val keywords: MapProperty<String, Keywords>
     val patternAnnotation: Property<String> // optional
@@ -261,7 +250,7 @@ private val LOGGER = Logging.getLogger(PreprocessTask::class.java)
 
 internal abstract class PreprocessAction : WorkAction<PreprocessParameters> {
     override fun execute() {
-        val compiler = parameters.compiler
+        val compiler = parameters.compiler.get()
         if (compiler.isEmpty) {
             PreprocessActionImpl().accept(parameters)
         } else {
@@ -295,6 +284,7 @@ internal abstract class PreprocessAction : WorkAction<PreprocessParameters> {
                     "net.fabricmc.mappingio.",
                     "org.cadixdev.lorenz.",
                     "org.cadixdev.bombe.",
+                    "org.objectweb.asm.",
                     PreprocessParameters::class.java.name,
                     Keywords::class.java.name,
                 ),
@@ -316,7 +306,7 @@ internal abstract class PreprocessAction : WorkAction<PreprocessParameters> {
 private class PreprocessActionImpl : Consumer<PreprocessParameters> {
     override fun accept(params: PreprocessParameters) {
         val logger = LOGGER
-        val entries = params.entries.get().map { PreprocessTask.InOut(it.source, it.generated.get(), it.overwrites.orNull) }
+        val entries = params.entries.get().map { PreprocessTask.InOut(it.source.get(), it.generated.get(), it.overwrites.orNull) }
         val sourceMappings = params.sourceMappings.orNull
         val destinationMappings = params.destinationMappings.orNull
         val intermediateMappingsName = params.intermediateMappingsName
@@ -325,8 +315,8 @@ private class PreprocessActionImpl : Consumer<PreprocessParameters> {
         val reverseMapping = params.reverseMapping.get()
         val jdkHome = params.jdkHome
         val remappedjdkHome = params.remappedjdkHome
-        val classpath = if (params.classpath.isEmpty) null else params.classpath
-        val remappedClasspath = if (params.remappedClasspath.isEmpty) null else params.remappedClasspath
+        val classpath = params.classpath.orNull
+        val remappedClasspath = params.remappedClasspath.orNull
         val vars = params.vars
         val keywords = params.keywords
         val patternAnnotation = params.patternAnnotation
@@ -403,10 +393,10 @@ private class PreprocessActionImpl : Consumer<PreprocessParameters> {
                     val srcMap = sourceMappings!!.readMappings()
                     val dstMap = destinationMappings!!.readMappings()
                     legacyMap.mergeBoth(
-                        // The inner clsMap is to make the join work, the outer one for custom classes (which are not part of
-                        // dstMap and would otherwise be filtered by the join)
-                        srcMap.mergeBoth(clsMap).join(dstMap.reverse()).mergeBoth(clsMap),
-                        MappingSet.create(LegacyMappingSetModelFactory()))
+                            // The inner clsMap is to make the join work, the outer one for custom classes (which are not part of
+                            // dstMap and would otherwise be filtered by the join)
+                            srcMap.mergeBoth(clsMap).join(dstMap.reverse()).mergeBoth(clsMap),
+                            MappingSet.create(LegacyMappingSetModelFactory()))
                 } else {
                     LegacyMapping.readMappingSet(mapping.toPath(), reverseMapping)
                 }
@@ -454,10 +444,10 @@ private class PreprocessActionImpl : Consumer<PreprocessParameters> {
                     val kws = keywords.get().entries.find { (ext, _) -> relPath.endsWith(ext) }
                     if (kws != null) {
                         processedSources[relPath] = CommentPreprocessor(vars.get()).convertSource(
-                            kws.value,
-                            lines,
-                            lines.map { Pair(it, emptyList()) },
-                            relPath
+                                kws.value,
+                                lines,
+                                lines.map { Pair(it, emptyList()) },
+                                relPath
                         ).joinToString("\n")
                     }
                 }
@@ -503,18 +493,6 @@ private class PreprocessActionImpl : Consumer<PreprocessParameters> {
 
         if (commentPreprocessor.fail) {
             throw GradleException("Failed to remap sources. See errors above for details.")
-        }
-    }
-
-    private fun readMappings(path: Path, visitor: MappingVisitor) {
-        if (path.extension == "jar") {
-            FileSystems.newFileSystem(path).use { fileSystem ->
-                fileSystem.getPath("mappings", "mappings.tiny").bufferedReader().use { reader ->
-                    return MappingReader.read(reader, visitor)
-                }
-            }
-        } else {
-            return MappingReader.read(path, visitor)
         }
     }
 
@@ -691,7 +669,7 @@ private class PreprocessActionImpl : Consumer<PreprocessParameters> {
                 val srcDesc = extField.getDesc(extSrcNsId)
                 if (srcDesc == null) {
                     LOGGER.error("Owner ${extCls.getName(extSrcNsId)} of field $srcName does not appear to have any mappings. " +
-                        "As such, you must provide the full signature of this method manually " +
+                        "As such, you must provide the full signature of this field manually " +
                         "(if it does not change across versions, providing it for either version is sufficient).")
                     continue
                 }
@@ -722,7 +700,21 @@ private class PreprocessActionImpl : Consumer<PreprocessParameters> {
                     tmpTree.getClass(dstName)!!
                 }
             } else {
-                dstTree.getClass(srcCls.getName(srcSharedNsId), dstSharedNsId) ?: continue
+                val sharedName = srcCls.getName(srcSharedNsId)
+                dstTree.getClass(sharedName, dstSharedNsId)
+                    // Usually the shared name is something human-unfriendly like `class_1234`, and therefore we'd
+                    // prefer keeping the human readable source name when we cannot find the destination name.
+                    // However, in the specific case of mapping between obfuscated and unobfuscated versions, the
+                    // shared name will actually be the unobfuscated name, and that'll usually be closer than the
+                    // original (often yarn) name. So in such a scenario, we'll just use the shared name as the
+                    // destination name if we can't find the real destination class (e.g. because it was renamed).
+                    ?: if (sharedNamespace == "mojang") {
+                        tmpTree.visitClass(sharedName)
+                        tmpTree.visitDstName(MappedElementKind.CLASS, dstNamedNsId, sharedName)
+                        tmpTree.getClass(sharedName)!!
+                    } else {
+                        continue
+                    }
             }
             mrgTree.visitClass(srcCls.getName(srcNamedNsId))
             mrgTree.visitDstName(MappedElementKind.CLASS, 0, dstCls.getName(dstNamedNsId))
